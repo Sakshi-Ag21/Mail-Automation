@@ -1,0 +1,2 @@
+"""Mail automation dashboard modules."""
+
