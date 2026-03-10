@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import mimetypes
+import re
 import smtplib
 from dataclasses import dataclass
 from email.message import EmailMessage
@@ -15,24 +16,23 @@ class Attachment:
     data: bytes
 
 
-def render_template(text: str, *, name: str, email: str) -> str:
-    """
-    Basic personalization using Python format placeholders.
+_TAG_RE = re.compile(r"\{\{\s*([a-zA-Z0-9_]+)\s*\}\}")
 
-    Supported placeholders:
-    - {name}
-    - {email}
+
+def render_template(text: str, variables: dict[str, str]) -> str:
     """
-    safe = {
-        "name": name,
-        "email": email,
-    }
-    try:
-        return text.format(**safe)
-    except Exception:
-        # If the user types unmatched braces or an invalid placeholder,
-        # fall back to raw text rather than failing the whole send.
-        return text
+    Personalization using moustache-style placeholders.
+
+    Example: "Hi {{name}}" with variables {"name": "Sakshi"}.
+    """
+    if not text:
+        return ""
+
+    def repl(match: re.Match[str]) -> str:
+        key = match.group(1).strip().lower()
+        return str(variables.get(key, ""))
+
+    return _TAG_RE.sub(repl, text)
 
 
 def build_message(
