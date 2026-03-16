@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import io
+import re
 from typing import Iterable
 
 import pandas as pd
+import requests
 
 
 @dataclass(frozen=True)
@@ -61,4 +63,42 @@ def load_recipients_from_upload(filename: str, content: bytes) -> list[Recipient
         raise ValueError("No valid recipients found after cleaning.")
 
     return recipients
+
+
+_SHEET_ID_RE = re.compile(r"/spreadsheets/d/([a-zA-Z0-9-_]+)")
+_GID_RE = re.compile(r"(?:\?|#|&|/)(?:gid=)(\d+)")
+
+
+def google_sheet_to_csv_url(sheet_url: str) -> str:
+    """
+    Convert a Google Sheets share URL into a public CSV export URL.
+
+    Requires the sheet to be shared as "Anyone with the link can view".
+    """
+    url = (sheet_url or "").strip()
+    m = _SHEET_ID_RE.search(url)
+    if not m:
+        raise ValueError("Invalid Google Sheets link. It should contain '/spreadsheets/d/<sheetId>'.")
+
+    sheet_id = m.group(1)
+    gid_match = _GID_RE.search(url)
+    gid = gid_match.group(1) if gid_match else "0"
+
+    return f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid={gid}"
+
+
+def load_recipients_from_google_sheet(sheet_url: str) -> list[Recipient]:
+    csv_url = google_sheet_to_csv_url(sheet_url)
+    try:
+        resp = requests.get(csv_url, timeout=20)
+    except Exception as e:
+        raise ValueError(f"Failed to fetch Google Sheet. Error: {e}") from e
+
+    if resp.status_code != 200:
+        raise ValueError(
+            "Failed to fetch Google Sheet. "
+            "Make sure the sheet is shared as 'Anyone with the link can view'."
+        )
+
+    return load_recipients_from_upload("sheet.csv", resp.content)
 
