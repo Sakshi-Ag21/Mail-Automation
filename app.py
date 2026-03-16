@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import os
 import time
 from dataclasses import asdict
 
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 
 from src.config import build_smtp_config, load_smtp_config
 from src.data_loader import Recipient, load_recipients_from_google_sheet, load_recipients_from_upload
@@ -22,6 +24,53 @@ def init_state() -> None:
     st.session_state.setdefault("attachments", [])  # list[Attachment]
     st.session_state.setdefault("subject_template", "")
     st.session_state.setdefault("body_template", "")
+    st.session_state.setdefault("_ga_initialized", False)
+
+
+def ga_measurement_id() -> str | None:
+    value = (os.getenv("GA_MEASUREMENT_ID") or "").strip()
+    return value or None
+
+
+def ga_init() -> None:
+    ga_id = ga_measurement_id()
+    if not ga_id or st.session_state.get("_ga_initialized"):
+        return
+
+    components.html(
+        f"""
+<script async src="https://www.googletagmanager.com/gtag/js?id={ga_id}"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){{dataLayer.push(arguments);}}
+  gtag('js', new Date());
+  gtag('config', '{ga_id}', {{'anonymize_ip': true}});
+</script>
+        """,
+        height=0,
+    )
+    st.session_state._ga_initialized = True
+
+
+def ga_event(event_name: str, params: dict | None = None) -> None:
+    ga_id = ga_measurement_id()
+    if not ga_id:
+        return
+
+    params_js = "{}" if not params else str(params).replace("'", '"')
+    components.html(
+        f"""
+<script async src="https://www.googletagmanager.com/gtag/js?id={ga_id}"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){{dataLayer.push(arguments);}}
+  gtag('js', new Date());
+  gtag('config', '{ga_id}', {{'anonymize_ip': true}});
+  gtag('event', '{event_name}', {params_js});
+</script>
+        """,
+        height=0,
+    )
 
 
 def push_log(evt: LogEvent) -> None:
@@ -252,6 +301,7 @@ def render_email_like_preview(*, from_name: str, from_email: str, to_email: str,
 st.set_page_config(page_title="Bulk Email Automation", layout="wide")
 init_state()
 inject_styles()
+ga_init()
 
 st.markdown(
     """
@@ -298,13 +348,21 @@ if st.session_state.step == 0:
         unsafe_allow_html=True,
     )
     if st.button("Start Sending Emails", type="primary"):
+        ga_event("start_sending_clicked", {"page": "landing"})
         st.session_state.step = 1
         st.rerun()
 
     st.markdown(
-        "<div style='margin-top:24px;font-size:13px;' class='subtle'>"
-        "No data is recorded or stored while using this tool. Made by <b>Sakshi Agrawal</b>."
-        "</div>",
+        (
+            "<div style='margin-top:24px;font-size:13px;' class='footer'>"
+            + (
+                "We don't store your email content or recipient lists. Anonymous usage analytics may be collected. "
+                "Made by <b>Sakshi Agrawal</b>."
+                if ga_measurement_id()
+                else "No data is recorded or stored while using this tool. Made by <b>Sakshi Agrawal</b>."
+            )
+            + "</div>"
+        ),
         unsafe_allow_html=True,
     )
 
