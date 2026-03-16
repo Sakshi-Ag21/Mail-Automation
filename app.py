@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import time
+import uuid
 from dataclasses import asdict
 
 import pandas as pd
@@ -32,6 +33,17 @@ def ga_measurement_id() -> str | None:
     return value or None
 
 
+def ga_api_secret() -> str | None:
+    value = (os.getenv("GA_API_SECRET") or "").strip()
+    return value or None
+
+
+def ga_client_id() -> str:
+    # Anonymous per-browser-session identifier for analytics.
+    st.session_state.setdefault("_ga_client_id", str(uuid.uuid4()))
+    return st.session_state._ga_client_id
+
+
 def ga_init() -> None:
     ga_id = ga_measurement_id()
     if not ga_id or st.session_state.get("_ga_initialized"):
@@ -55,6 +67,31 @@ def ga_init() -> None:
 def ga_event(event_name: str, params: dict | None = None) -> None:
     ga_id = ga_measurement_id()
     if not ga_id:
+        return
+
+    # Prefer server-side Measurement Protocol if API secret is configured.
+    api_secret = ga_api_secret()
+    if api_secret:
+        try:
+            import requests  # local import to avoid hard dependency surprises
+
+            endpoint = (
+                "https://www.google-analytics.com/mp/collect"
+                f"?measurement_id={ga_id}&api_secret={api_secret}"
+            )
+            payload = {
+                "client_id": ga_client_id(),
+                "events": [
+                    {
+                        "name": event_name,
+                        "params": params or {},
+                    }
+                ],
+            }
+            # Best-effort: do not crash UX if analytics fails.
+            requests.post(endpoint, json=payload, timeout=3)
+        except Exception:
+            pass
         return
 
     params_js = "{}" if not params else str(params).replace("'", '"')
