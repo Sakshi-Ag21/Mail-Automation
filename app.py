@@ -7,7 +7,7 @@ import pandas as pd
 import streamlit as st
 
 from src.config import build_smtp_config, load_smtp_config
-from src.data_loader import Recipient, load_recipients_from_upload
+from src.data_loader import Recipient, load_recipients_from_google_sheet, load_recipients_from_upload
 from src.email_sender import Attachment, build_message, render_template, send_via_gmail_smtp
 from src.logging_utils import LogEvent, error, info, warn
 
@@ -74,6 +74,18 @@ def inject_styles() -> None:
     st.markdown(
         """
 <style>
+  :root {
+    --bg0: #0F172A;
+    --bg1: #111827;
+    --card: #1E293B;
+    --text: #F8FAFC;
+    --muted: #94A3B8;
+    --indigo: #6366F1;
+    --indigoHover: #4F46E5;
+    --cyan: #06B6D4;
+    --ring: rgba(99,102,241,0.35);
+  }
+
   /* Make Streamlit use true full width */
   .main .block-container {
     max-width: 100% !important;
@@ -91,36 +103,70 @@ def inject_styles() -> None:
   .stApp {
     background: radial-gradient(1200px 600px at 20% 0%, rgba(99,102,241,0.18), rgba(0,0,0,0) 60%),
                 radial-gradient(900px 500px at 85% 10%, rgba(6,182,212,0.14), rgba(0,0,0,0) 55%),
-                linear-gradient(180deg, #0F172A 0%, #111827 100%);
-    color: #F8FAFC;
+                linear-gradient(180deg, var(--bg0) 0%, var(--bg1) 100%);
+    color: var(--text);
   }
+
+  /* Global typography boost */
+  html, body, [class*="st-"] { font-synthesis-weight: none; }
+  p, li, label, .stMarkdown, .stText, .stCaptionContainer { font-size: 16px; }
+
+  /* Subtle entrance animation */
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translate3d(0, 10px, 0); }
+    to   { opacity: 1; transform: translate3d(0, 0, 0); }
+  }
+  @keyframes glowPulse {
+    0%,100% { box-shadow: 0 0 0 0 rgba(99,102,241,0.0); }
+    50%     { box-shadow: 0 0 0 6px rgba(99,102,241,0.08); }
+  }
+
+  /* Cards: gradient border + hover lift */
   .card {
-    background: #1E293B;
-    border: 1px solid rgba(148,163,184,0.18);
-    border-radius: 16px;
-    padding: 22px 22px 16px 22px;
-    margin: 14px 0;
-    font-size: 16px;
+    position: relative;
+    background: linear-gradient(180deg, rgba(30,41,59,0.92), rgba(30,41,59,0.78));
+    border: 1px solid rgba(148,163,184,0.16);
+    border-radius: 18px;
+    padding: 26px 26px 18px 26px;
+    margin: 16px 0;
+    font-size: 17px;
+    animation: fadeUp 450ms ease both;
+    backdrop-filter: blur(6px);
+    transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
   }
-  .subtle { color: #94A3B8; }
+  .card:hover {
+    transform: translateY(-2px);
+    border-color: rgba(99,102,241,0.28);
+    box-shadow: 0 18px 40px rgba(0,0,0,0.25);
+  }
+  .subtle { color: var(--muted); }
+
+  /* KPI cards */
   .kpi {
     background: rgba(30,41,59,0.7);
     border: 1px solid rgba(148,163,184,0.18);
-    border-radius: 14px;
-    padding: 18px;
+    border-radius: 16px;
+    padding: 20px;
+    animation: fadeUp 450ms ease both;
+    transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
   }
-  .kpi-title { color: #94A3B8; font-size: 15px; }
-  .kpi-value { font-size: 38px; font-weight: 900; letter-spacing: -0.02em; }
+  .kpi:hover {
+    transform: translateY(-2px);
+    border-color: rgba(6,182,212,0.26);
+    box-shadow: 0 16px 36px rgba(0,0,0,0.22);
+  }
+  .kpi-title { color: var(--muted); font-size: 16px; letter-spacing: 0.02em; }
+  .kpi-value { font-size: 44px; font-weight: 950; letter-spacing: -0.03em; }
 
   .email-preview {
     border: 1px solid rgba(148,163,184,0.22);
-    border-radius: 14px;
-    padding: 16px;
-    background: rgba(15,23,42,0.55);
+    border-radius: 16px;
+    padding: 18px;
+    background: rgba(15,23,42,0.58);
     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
     white-space: pre-wrap;
     line-height: 1.55;
-    font-size: 15px;
+    font-size: 15.5px;
   }
   /* Make text areas feel more like a compose window */
   textarea {
@@ -130,30 +176,44 @@ def inject_styles() -> None:
 
   /* Buttons: larger, rounded, SaaS-like */
   .stButton > button {
-    border-radius: 14px !important;
-    padding: 0.80rem 1.15rem !important;
-    font-size: 16px !important;
-    font-weight: 700 !important;
+    border-radius: 16px !important;
+    padding: 0.95rem 1.25rem !important;
+    font-size: 17px !important;
+    font-weight: 800 !important;
     border: 1px solid rgba(148,163,184,0.18) !important;
+    transition: transform 120ms ease, box-shadow 120ms ease, background 120ms ease;
   }
+  .stButton > button:active { transform: translateY(1px) scale(0.99); }
   button[data-testid="baseButton-primary"] {
-    background: #6366F1 !important;
-    border: 1px solid rgba(99,102,241,0.85) !important;
+    background: linear-gradient(135deg, var(--indigo), rgba(6,182,212,0.55)) !important;
+    border: 1px solid rgba(99,102,241,0.75) !important;
+    box-shadow: 0 10px 22px rgba(99,102,241,0.18);
+    animation: glowPulse 2.8s ease-in-out infinite;
   }
   button[data-testid="baseButton-primary"]:hover {
-    background: #4F46E5 !important;
+    background: linear-gradient(135deg, var(--indigoHover), rgba(6,182,212,0.62)) !important;
+    box-shadow: 0 14px 26px rgba(99,102,241,0.22);
+    transform: translateY(-1px);
   }
   button[data-testid="baseButton-secondary"] {
     background: rgba(148,163,184,0.10) !important;
   }
+  button[data-testid="baseButton-secondary"]:hover {
+    background: rgba(148,163,184,0.14) !important;
+    transform: translateY(-1px);
+  }
 
   /* Inputs */
   div[data-baseweb="input"] input {
-    font-size: 16px !important;
+    font-size: 16.5px !important;
   }
   div[data-baseweb="textarea"] textarea {
-    border-radius: 14px !important;
+    border-radius: 16px !important;
   }
+
+  /* Links */
+  a { color: rgba(6,182,212,0.92) !important; text-decoration: none; }
+  a:hover { text-decoration: underline; }
 </style>
         """,
         unsafe_allow_html=True,
@@ -202,7 +262,7 @@ st.markdown(
     Send Swift
   </div>
   <div class="subtle" style="font-size: 19px; margin-top: 10px;">
-    Send FREE bulk personalized campaigns directly from Gmail.
+    Send personalized campaigns directly from Gmail.
     &nbsp;&nbsp;Upload recipients → Compose email → Send campaign
   </div>
 </div>
@@ -241,14 +301,52 @@ if st.session_state.step == 0:
         st.session_state.step = 1
         st.rerun()
 
+    st.markdown(
+        "<div style='margin-top:24px;font-size:13px;' class='subtle'>"
+        "No data is recorded or stored while using this tool. Made by <b>Sakshi Agrawal</b>."
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
 step = st.session_state.step
 if step == 0:
     st.stop()
 
 st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
 
-container = st.container()
-with container:
+step_container = st.container()
+with step_container:
+    nav1, nav2, nav3 = st.columns([0.2, 0.2, 0.6])
+    with nav1:
+        if st.button("← Back", use_container_width=True, disabled=step <= 1):
+            # Step mapping: 1<-landing, 2<-1, 3/4<-2, 5<-3
+            if step == 2:
+                st.session_state.step = 1
+            elif step in (3, 4):
+                st.session_state.step = 2
+            elif step >= 5:
+                st.session_state.step = 3
+            else:
+                st.session_state.step = max(1, step - 1)
+            st.rerun()
+    with nav2:
+        if st.button("Restart", use_container_width=True):
+            st.session_state.step = 0
+            st.session_state.smtp = None
+            st.session_state.recipients = None
+            st.session_state.attachments = []
+            st.session_state.results = []
+            st.session_state.logs = []
+            st.session_state.subject_template = ""
+            st.session_state.body_template = ""
+            st.session_state.gmail_input = ""
+            st.session_state.app_pw_input = ""
+            st.session_state.sender_name_input = ""
+            st.session_state.sheet_url = ""
+            st.rerun()
+
+    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+
     def step1_body():
         env_prefill = None
         try:
@@ -257,6 +355,10 @@ with container:
             env_prefill = None
 
         st.caption("Use a Gmail App Password (not your normal password). Credentials are kept only in this session.")
+        st.markdown(
+            "Need help? Create an App Password here: "
+            "[Google App Passwords](https://myaccount.google.com/apppasswords)",
+        )
         gmail = st.text_input("Gmail address", value=st.session_state.get("gmail_input", env_prefill.email if env_prefill else ""), placeholder="you@gmail.com")
         app_pw = st.text_input("App password", value=st.session_state.get("app_pw_input", ""), type="password", placeholder="16-character app password")
         sender_name_input = st.text_input("Sender name (optional)", value=st.session_state.get("sender_name_input", env_prefill.sender_name if env_prefill else ""))
@@ -287,13 +389,43 @@ with container:
         if st.session_state.smtp is not None:
             st.success(f"Connected as {st.session_state.smtp.email}")
 
-    card("Connect Gmail", "STEP 1", step1_body)
+    if step == 1:
+        card("Connect Gmail", "STEP 1", step1_body)
+        if st.session_state.smtp is not None:
+            if st.button("Next: Upload Recipients", type="primary"):
+                st.session_state.step = 2
+                st.rerun()
 
     def step2_body():
         if st.session_state.smtp is None:
             st.info("Complete Step 1 first.")
             return
 
+        st.caption(
+            "Your file must include at least `Name` and `Email` columns. "
+            "You can add any extra columns (e.g. `company`, `role`) for personalization."
+        )
+
+        st.markdown("**Option A — Google Sheet link (shared view-only):**")
+        sheet_url = st.text_input(
+            "Google Sheet link",
+            value=st.session_state.get("sheet_url", ""),
+            placeholder="https://docs.google.com/spreadsheets/d/…/edit#gid=0",
+        )
+        st.session_state.sheet_url = sheet_url
+        if st.button("Fetch from Google Sheets", use_container_width=True):
+            try:
+                loaded = load_recipients_from_google_sheet(sheet_url)
+                st.session_state.recipients = loaded
+                st.session_state.results = []
+                push_log(info("Loaded recipients from Google Sheets link"))
+            except Exception as e:
+                st.session_state.recipients = None
+                push_log(error(f"Failed to load Google Sheet: {e}"))
+                st.error(str(e))
+
+        st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+        st.markdown("**Option B — Upload CSV / Excel:**")
         upload = st.file_uploader("Drag & drop CSV / Excel here", type=["csv", "xlsx", "xls"])
         if upload is not None:
             try:
@@ -311,7 +443,12 @@ with container:
             st.write("Preview:")
             st.dataframe(recipients_to_df(st.session_state.recipients).head(25), use_container_width=True, hide_index=True)
 
-    card("Upload Recipients", "STEP 2", step2_body)
+    if step == 2:
+        card("Upload Recipients", "STEP 2", step2_body)
+        if st.session_state.recipients:
+            if st.button("Next: Compose Email", type="primary"):
+                st.session_state.step = 3
+                st.rerun()
 
     def step3_body():
         if not st.session_state.recipients:
@@ -344,7 +481,8 @@ with container:
             st.session_state.step = max(st.session_state.step, 4)
             st.rerun()
 
-    card("Compose Email", "STEP 3", step3_body)
+    if step in (3, 4, 5):
+        card("Compose Email", "STEP 3", step3_body)
 
     def step4_body():
         if st.session_state.smtp is None or not st.session_state.recipients:
@@ -374,7 +512,13 @@ with container:
             st.session_state.step = max(st.session_state.step, 5)
             st.rerun()
 
-    card("Preview Email", "STEP 4", step4_body)
+    if step in (3, 4, 5):
+        card("Preview Email", "STEP 4", step4_body)
+        if step < 5 and st.session_state.smtp is not None and st.session_state.recipients:
+            if st.button("Next: Send Campaign", type="primary"):
+                st.session_state.step = 5
+                st.rerun()
+
     def step5_body():
         if st.session_state.smtp is None or not st.session_state.recipients:
             st.info("Complete Steps 1–4 first.")
@@ -480,8 +624,17 @@ with container:
         st.subheader("Sent / Failed logs")
         render_results_table()
 
-    card("Send Campaign", "STEP 5", step5_body)
+    if step >= 5:
+        card("Send Campaign", "STEP 5", step5_body)
 
-st.subheader("Logs")
-render_logs_table()
+if step >= 5:
+    st.subheader("Logs")
+    render_logs_table()
+
+st.markdown(
+    "<div style='margin-top:24px;font-size:13px;' class='subtle'>"
+    "No data is recorded or stored while using this tool. Made by <b>Sakshi Agrawal</b>."
+    "</div>",
+    unsafe_allow_html=True,
+)
 
